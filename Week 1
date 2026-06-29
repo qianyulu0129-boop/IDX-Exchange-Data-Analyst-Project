@@ -1,1 +1,23 @@
+# Week 1 - Monthly Dataset Aggregation
 
+import pandas as pd
+import os
+
+# === Step 1: Load and concatenate sold files ===
+sold_files = [f'CRMLSSold2024{str(i).zfill(2)}.csv' for i in range(1, 13)]
+# Add 2025 files as needed...
+
+sold_dfs = []
+for f in sold_files:
+    if os.path.exists(f):
+        sold_dfs.append(pd.read_csv(f))
+
+sold = pd.concat(sold_dfs, ignore_index=True)
+print(f"Rows after concatenation (sold): {len(sold)}")  
+
+# === Step 2: Filter Residential only ===
+sold_residential = sold[sold['PropertyType'] == 'Residential']
+print(f"Rows after Residential filter (sold): {len(sold_residential)}")
+
+# === Step 3: Save output ===
+sold_residential.to_csv('sold_residential_combined.csv', index=False)
