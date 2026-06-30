@@ -1,22 +1,67 @@
 """
 Week 1 - Monthly Dataset Aggregation
+IDX Exchange MLS Analytics Program
+Confidential - For Intern Use Only
 """
 
 import pandas as pd
 import glob
 import os
+import re
+from datetime import date
 
 # ============================================================
 # CONFIG
 # ============================================================
-DATA_FOLDER = "."       # Folder where your CSV files are stored
-OUTPUT_FOLDER = "."     # Folder where output CSVs will be saved
+DATA_FOLDER = "."       # Folder where your monthly CSV files are stored
+OUTPUT_FOLDER = "."     # Folder where sold.csv / listings.csv will be saved
+
+# Full expected date range for this project
+START_YEAR_MONTH = (2024, 1)
+END_YEAR_MONTH   = (2026, 5)   # update each time a new month closes
 
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+
+def expected_months(start_ym, end_ym):
+    """Generate YYYYMM strings from start to end, inclusive."""
+    months = []
+    y, m = start_ym
+    while (y, m) <= end_ym:
+        months.append(f"{y}{m:02d}")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return months
+
+
+def check_coverage(files, label):
+    """Compare which months are present in `files` vs. the full expected range."""
+    found_months = set()
+    for f in files:
+        match = re.search(r"(\d{6})", os.path.basename(f))
+        if match:
+            found_months.add(match.group(1))
+
+    all_months = expected_months(START_YEAR_MONTH, END_YEAR_MONTH)
+    missing = [m for m in all_months if m not in found_months]
+
+    print(f"[{label}] Expected months : {len(all_months)} "
+          f"({all_months[0]} to {all_months[-1]})")
+    print(f"[{label}] Found months    : {len(found_months)}")
+    if missing:
+        print(f"[{label}] MISSING months  : {len(missing)} -> {missing}")
+    else:
+        print(f"[{label}] All months present - data is complete.")
+    print()
 
 # ============================================================
 # STEP 1: Discover all monthly files automatically
 # ============================================================
+# Note: if a folder contains BOTH "CRMLSSold202403.csv" and
+# "CRMLSSold202403_filled.csv" for the same month, that month
+# will be loaded twice. Keep only ONE file per month per dataset
+# (per mentor's instruction: use the _filled version, drop the
+# extra latfilled/lonfilled columns, and remove the non-filled
+# duplicate for that month).
 
 sold_files    = sorted(glob.glob(os.path.join(DATA_FOLDER, "CRMLSSold*.csv")))
 listing_files = sorted(glob.glob(os.path.join(DATA_FOLDER, "CRMLSListing*.csv")))
@@ -33,6 +78,35 @@ for f in listing_files:
     print(f"  {os.path.basename(f)}")
 print()
 
+print("=" * 55)
+print("DATA COVERAGE CHECK")
+print("=" * 55)
+check_coverage(sold_files, "SOLD")
+check_coverage(listing_files, "LISTING")
+
+# ============================================================
+# HELPER: Load one file, drop latfilled/lonfilled if present
+# ============================================================
+
+def load_file(path):
+    """
+    Load a single monthly CSV. If it's a '_filled' file that still
+    has the latfilled/lonfilled columns, drop them so all monthly
+    files end up with the same column structure before concatenation.
+    """
+    df = pd.read_csv(path, low_memory=False)
+
+    extra_cols = [c for c in ["latfilled", "lonfilled"] if c in df.columns]
+    if extra_cols:
+        df = df.drop(columns=extra_cols)
+        print(f"  Loaded {os.path.basename(path):35s}  rows: {len(df):>7,}  "
+              f"(dropped columns: {extra_cols})")
+    else:
+        print(f"  Loaded {os.path.basename(path):35s}  rows: {len(df):>7,}")
+
+    return df
+
+
 # ============================================================
 # HELPER: Load, concatenate, filter, and save
 # ============================================================
@@ -40,31 +114,29 @@ print()
 def process_dataset(files, label, output_filename):
     """
     Load all monthly CSVs for one dataset type, concatenate them,
-    filter to Residential only, and save the result.
+    filter to Residential only, and save the result as a fixed
+    filename (sold.csv / listings.csv) that gets overwritten/updated
+    each week as new monthly files are added to the folder.
     """
     if not files:
-        print(f"[{label}] WARNING: No files found — skipping.\n")
+        print(f"[{label}] WARNING: No files found - skipping.\n")
         return None
 
-    # --- Load each monthly file ---
-    dfs = []
-    for f in files:
-        df = pd.read_csv(f, low_memory=False)
-        dfs.append(df)
-        print(f"  Loaded {os.path.basename(f):35s}  rows: {len(df):>7,}")
+    # --- Load each monthly file (auto-drops latfilled/lonfilled) ---
+    dfs = [load_file(f) for f in files]
 
     # --- Concatenate ---
     combined = pd.concat(dfs, ignore_index=True)
     rows_before = len(combined)
-    print(f"\n[{label}] Row count AFTER concatenation  : {rows_before:>7,}")
+    print(f"\n[{label}] Row count AFTER concatenation   : {rows_before:>7,}")
 
     # --- Filter PropertyType == 'Residential' ---
     residential = combined[combined["PropertyType"] == "Residential"].copy()
     rows_after = len(residential)
     print(f"[{label}] Row count AFTER Residential filter: {rows_after:>7,}")
-    print(f"[{label}] Rows removed (non-Residential)    : {rows_before - rows_after:>7,}")
+    print(f"[{label}] Rows removed (non-Residential)     : {rows_before - rows_after:>7,}")
 
-    # --- Save output ---
+    # --- Save output (fixed filename - this IS the cumulative file) ---
     output_path = os.path.join(OUTPUT_FOLDER, output_filename)
     residential.to_csv(output_path, index=False)
     print(f"[{label}] Saved -> {output_path}\n")
@@ -73,7 +145,7 @@ def process_dataset(files, label, output_filename):
 
 
 # ============================================================
-# STEP 2: Process SOLD dataset
+# STEP 2: Process SOLD dataset -> sold.csv
 # ============================================================
 
 print("=" * 55)
@@ -82,11 +154,11 @@ print("=" * 55)
 sold_residential = process_dataset(
     files           = sold_files,
     label           = "SOLD",
-    output_filename = "sold_residential_combined.csv"
+    output_filename = "sold.csv"
 )
 
 # ============================================================
-# STEP 3: Process LISTING dataset
+# STEP 3: Process LISTING dataset -> listings.csv
 # ============================================================
 
 print("=" * 55)
@@ -95,7 +167,7 @@ print("=" * 55)
 listing_residential = process_dataset(
     files           = listing_files,
     label           = "LISTING",
-    output_filename = "listing_residential_combined.csv"
+    output_filename = "listings.csv"
 )
 
 # ============================================================
@@ -106,19 +178,16 @@ print("=" * 55)
 print("SUMMARY")
 print("=" * 55)
 if sold_residential is not None:
-    print(f"Sold Residential     : {len(sold_residential):>7,} rows  |  "
+    print(f"sold.csv     : {len(sold_residential):>7,} rows  |  "
           f"{sold_residential['CountyOrParish'].nunique()} counties  |  "
           f"{sold_residential['City'].nunique()} cities")
     print(f"  Date range : {sold_residential['CloseDate'].min()}  ->  "
           f"{sold_residential['CloseDate'].max()}")
-    print(f"  ClosePrice : min ${sold_residential['ClosePrice'].min():>12,.0f}  "
-          f"max ${sold_residential['ClosePrice'].max():>12,.0f}  "
-          f"median ${sold_residential['ClosePrice'].median():>12,.0f}")
 
 if listing_residential is not None:
-    print(f"Listing Residential  : {len(listing_residential):>7,} rows  |  "
+    print(f"listings.csv : {len(listing_residential):>7,} rows  |  "
           f"{listing_residential['CountyOrParish'].nunique()} counties  |  "
           f"{listing_residential['City'].nunique()} cities")
 
 print()
-print("Week 1 complete!")
+print("Done! sold.csv and listings.csv are now up to date with all months in the folder.")
