@@ -1,1 +1,266 @@
+"""
+Week 2-3 - Dataset Structuring, Validation, and Mortgage Rate Enrichment
+IDX Exchange MLS Analytics Program
+"""
 
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+# ============================================================
+# CONFIG
+# ============================================================
+DATA_FOLDER = "/Users/qianyulu/Desktop/IDXexchange"
+OUTPUT_FOLDER = "/Users/qianyulu/Desktop/IDXexchange"
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# ============================================================
+# STEP 1: Load the combined datasets from Week 1
+# ============================================================
+print("=" * 55)
+print("LOADING DATASETS")
+print("=" * 55)
+
+sold     = pd.read_csv(os.path.join(DATA_FOLDER, "sold.csv"),     low_memory=False)
+listings = pd.read_csv(os.path.join(DATA_FOLDER, "listings.csv"), low_memory=False)
+
+print(f"sold.csv     loaded: {len(sold):>7,} rows  x  {sold.shape[1]} columns")
+print(f"listings.csv loaded: {len(listings):>7,} rows  x  {listings.shape[1]} columns")
+print()
+
+# ============================================================
+# PART A: DATASET UNDERSTANDING
+# ============================================================
+print("=" * 55)
+print("PART A: DATASET UNDERSTANDING")
+print("=" * 55)
+
+# --- A1: Basic structure ---
+print("--- SOLD: Column Data Types ---")
+print(sold.dtypes.to_string())
+print()
+
+# --- A2: PropertyType breakdown ---
+print("--- SOLD: PropertyType Breakdown ---")
+print(sold["PropertyType"].value_counts())
+print()
+
+print("--- LISTINGS: PropertyType Breakdown ---")
+print(listings["PropertyType"].value_counts())
+print()
+
+# --- A3: Confirm both are already Residential-only (from Week 1) ---
+assert (sold["PropertyType"] == "Residential").all(), \
+    "sold.csv contains non-Residential rows!"
+assert (listings["PropertyType"] == "Residential").all(), \
+    "listings.csv contains non-Residential rows!"
+print("Confirmed: both datasets are Residential only.\n")
+
+# ============================================================
+# PART B: MISSING VALUE ANALYSIS
+# ============================================================
+print("=" * 55)
+print("PART B: MISSING VALUE ANALYSIS")
+print("=" * 55)
+
+def missing_value_report(df, label):
+    total = len(df)
+    null_counts = df.isnull().sum()
+    null_pct    = (null_counts / total * 100).round(2)
+    report = pd.DataFrame({
+        "null_count": null_counts,
+        "null_pct"  : null_pct
+    }).sort_values("null_pct", ascending=False)
+
+    print(f"\n--- {label}: Missing Value Report ---")
+    print(report.to_string())
+
+    # Flag columns above 90% missing
+    high_missing = report[report["null_pct"] > 90]
+    if not high_missing.empty:
+        print(f"\n  Columns with >90% missing values ({len(high_missing)}):")
+        for col in high_missing.index:
+            print(f"    {col:40s}  {high_missing.loc[col,'null_pct']}% missing")
+    else:
+        print("  No columns above 90% missing threshold.")
+    print()
+    return report
+
+sold_missing     = missing_value_report(sold,     "SOLD")
+listings_missing = missing_value_report(listings, "LISTINGS")
+
+# ============================================================
+# PART C: NUMERIC DISTRIBUTION REVIEW
+# ============================================================
+print("=" * 55)
+print("PART C: NUMERIC DISTRIBUTION REVIEW")
+print("=" * 55)
+
+numeric_fields = [
+    "ClosePrice", "ListPrice", "OriginalListPrice",
+    "LivingArea", "LotSizeAcres", "BedroomsTotal",
+    "BathroomsTotalInteger", "DaysOnMarket", "YearBuilt"
+]
+
+print("--- SOLD: Numeric Summary ---")
+sold_numeric_summary = sold[numeric_fields].describe(
+    percentiles=[0.05, 0.25, 0.5, 0.75, 0.95]
+).T
+print(sold_numeric_summary.to_string())
+print()
+
+# --- Histograms for key fields ---
+fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+fig.suptitle("SOLD - Key Numeric Distributions", fontsize=13)
+
+sold["ClosePrice"].dropna().plot(kind="hist", bins=50, ax=axes[0], color="steelblue")
+axes[0].set_title("ClosePrice")
+axes[0].set_xlabel("$")
+
+sold["LivingArea"].dropna().plot(kind="hist", bins=50, ax=axes[1], color="seagreen")
+axes[1].set_title("LivingArea (sqft)")
+
+sold["DaysOnMarket"].dropna().plot(kind="hist", bins=50, ax=axes[2], color="coral")
+axes[2].set_title("DaysOnMarket")
+
+plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_FOLDER, "week2_numeric_distributions.png"), dpi=150)
+plt.close()
+print("Histogram saved -> week2_numeric_distributions.png\n")
+
+# --- Boxplots ---
+fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+fig.suptitle("SOLD - Boxplots (outlier check)", fontsize=13)
+
+sold["ClosePrice"].dropna().plot(kind="box", ax=axes[0])
+axes[0].set_title("ClosePrice")
+
+sold["LivingArea"].dropna().plot(kind="box", ax=axes[1])
+axes[1].set_title("LivingArea")
+
+sold["DaysOnMarket"].dropna().plot(kind="box", ax=axes[2])
+axes[2].set_title("DaysOnMarket")
+
+plt.tight_layout()
+plt.savefig(os.path.join(OUTPUT_FOLDER, "week2_boxplots.png"), dpi=150)
+plt.close()
+print("Boxplots saved -> week2_boxplots.png\n")
+
+# ============================================================
+# PART D: SUGGESTED EDA QUESTIONS
+# ============================================================
+print("=" * 55)
+print("PART D: EDA QUESTIONS")
+print("=" * 55)
+
+# Q1: Median and average close prices
+print(f"Median ClosePrice : ${sold['ClosePrice'].median():>12,.0f}")
+print(f"Mean   ClosePrice : ${sold['ClosePrice'].mean():>12,.0f}")
+print()
+
+# Q2: Days on Market distribution
+dom = sold["DaysOnMarket"].dropna()
+print(f"DaysOnMarket  min: {dom.min():.0f}  |  median: {dom.median():.0f}  |  "
+      f"mean: {dom.mean():.1f}  |  max: {dom.max():.0f}")
+print()
+
+# Q3: % sold above vs below list price
+sold_temp = sold.dropna(subset=["ClosePrice", "ListPrice"])
+above = (sold_temp["ClosePrice"] > sold_temp["ListPrice"]).sum()
+below = (sold_temp["ClosePrice"] < sold_temp["ListPrice"]).sum()
+total_valid = len(sold_temp)
+print(f"Sold ABOVE list price : {above:>6,}  ({above/total_valid*100:.1f}%)")
+print(f"Sold BELOW list price : {below:>6,}  ({below/total_valid*100:.1f}%)")
+print()
+
+# Q4: Date consistency issues (close date before listing date)
+sold_dates = sold.dropna(subset=["CloseDate", "ListingContractDate"]).copy()
+sold_dates["CloseDate"]           = pd.to_datetime(sold_dates["CloseDate"], format="mixed")  # 改这行
+sold_dates["ListingContractDate"] = pd.to_datetime(sold_dates["ListingContractDate"], format="mixed")  # 改这行
+date_issues = (sold_dates["CloseDate"] < sold_dates["ListingContractDate"]).sum()
+print(f"Records where CloseDate < ListingContractDate: {date_issues:,}")
+print()
+
+# Q5: Top counties by median close price
+print("--- Top 10 Counties by Median ClosePrice ---")
+county_median = (
+    sold.groupby("CountyOrParish")["ClosePrice"]
+    .median()
+    .sort_values(ascending=False)
+    .head(10)
+)
+print(county_median.apply(lambda x: f"${x:,.0f}").to_string())
+print()
+
+# ============================================================
+# PART E: MORTGAGE RATE ENRICHMENT (FRED API)
+# ============================================================
+print("=" * 55)
+print("PART E: MORTGAGE RATE ENRICHMENT")
+print("=" * 55)
+
+# Step 1: Fetch MORTGAGE30US from FRED (no API key needed)
+print("Fetching MORTGAGE30US from FRED...")
+url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=MORTGAGE30US"
+mortgage = pd.read_csv(url, parse_dates=["observation_date"])
+mortgage.columns = ["date", "rate_30yr_fixed"]
+print(f"Fetched {len(mortgage):,} weekly observations")
+print(f"Rate range: {mortgage['date'].min().date()} to {mortgage['date'].max().date()}")
+print()
+
+# Step 2: Resample weekly to monthly average
+mortgage["year_month"] = mortgage["date"].dt.to_period("M")
+mortgage_monthly = (
+    mortgage.groupby("year_month")["rate_30yr_fixed"]
+    .mean()
+    .reset_index()
+)
+mortgage_monthly["rate_30yr_fixed"] = mortgage_monthly["rate_30yr_fixed"].round(2)
+print("--- Monthly Mortgage Rates (sample) ---")
+print(mortgage_monthly.tail(6).to_string(index=False))
+print()
+
+# Step 3: Create year_month join key on MLS datasets
+sold["year_month"] = pd.to_datetime(sold["CloseDate"], format="mixed").dt.to_period("M")
+listings["year_month"] = pd.to_datetime(listings["ListingContractDate"], format="mixed").dt.to_period("M")
+
+
+# Step 4: Merge
+sold_enriched     = sold.merge(mortgage_monthly,     on="year_month", how="left")
+listings_enriched = listings.merge(mortgage_monthly, on="year_month", how="left")
+
+# Step 5: Validate merge
+sold_null_rates     = sold_enriched["rate_30yr_fixed"].isnull().sum()
+listings_null_rates = listings_enriched["rate_30yr_fixed"].isnull().sum()
+print(f"Null rate values after merge - sold: {sold_null_rates}  |  "
+      f"listings: {listings_null_rates}")
+if sold_null_rates == 0 and listings_null_rates == 0:
+    print("Merge validation passed: no null rates.")
+else:
+    print("WARNING: Some rows did not match a mortgage rate. Check year_month alignment.")
+print()
+
+# Preview
+print("--- Sold + Rate Preview ---")
+print(sold_enriched[["CloseDate", "year_month", "ClosePrice",
+                      "rate_30yr_fixed"]].head(5).to_string(index=False))
+print()
+
+# ============================================================
+# STEP 6: Save enriched datasets
+# ============================================================
+print("=" * 55)
+print("SAVING OUTPUT FILES")
+print("=" * 55)
+
+sold_out     = os.path.join(OUTPUT_FOLDER, "sold_enriched.csv")
+listings_out = os.path.join(OUTPUT_FOLDER, "listings_enriched.csv")
+
+sold_enriched.to_csv(sold_out,         index=False)
+listings_enriched.to_csv(listings_out, index=False)
+
+print(f"sold_enriched.csv     saved  ->  {sold_out}")
+print(f"listings_enriched.csv saved  ->  {listings_out}")
+print()
+print("Week 2-3 complete!")
