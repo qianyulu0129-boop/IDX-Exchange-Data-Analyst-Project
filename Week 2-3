@@ -12,14 +12,37 @@ import os
 # ============================================================
 # CONFIG
 # ============================================================
-DATA_FOLDER   = "."
-OUTPUT_FOLDER = "."
+DATA_FOLDER   = "/Users/qianyulu/Desktop/IDXexchange"
+OUTPUT_FOLDER = "/Users/qianyulu/Desktop/IDXexchange"
 
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # ============================================================
-# Core fields to keep (per mentor's instruction)
+# Core fields to keep — covers all requirements through Week 10
 # ============================================================
+CORE_FIELDS = [
+    # Prices
+    "ClosePrice", "ListPrice", "OriginalListPrice",
+    # Property characteristics
+    "LivingArea", "LotSizeAcres", "BedroomsTotal",
+    "BathroomsTotalInteger", "DaysOnMarket", "YearBuilt",
+    # Location (Week 6 segment analysis + Week 8-10 dashboard filters)
+    "City", "CountyOrParish", "PostalCode", "MLSAreaMajor",
+    # Property classification
+    "PropertyType", "PropertySubType", "MlsStatus",
+    # Agent / Office (Week 8-10 competitive analysis)
+    "ListOfficeName", "BuyerOfficeName",
+    "ListAgentFirstName", "ListAgentLastName", "ListAgentFullName",
+    "ListAgentEmail",
+    # Dates (Week 4-5 date checks + Week 6 feature engineering)
+    "CloseDate", "ListingContractDate",
+    "PurchaseContractDate", "ContractStatusChangeDate",
+    # Property features (Week 8-10 dashboard filters)
+    "WaterfrontYN", "BasementYN", "PoolPrivateYN", "ViewYN",
+    # Coordinates (Week 4-5 geo checks + Week 6 school district join)
+    "Latitude", "Longitude",
+]
+
 # 9 numeric fields for distribution analysis (per mentor's instruction)
 NUMERIC_FIELDS = [
     "ClosePrice", "ListPrice", "OriginalListPrice",
@@ -53,6 +76,30 @@ if dup_cols_sold:
 if dup_cols_listings:
     listings = listings.drop(columns=dup_cols_listings)
     print(f"Removed duplicate columns from listings : {dup_cols_listings}")
+print()
+
+# ============================================================
+# STEP 1C: Keep core fields only
+# ============================================================
+# Why: removes irrelevant metadata columns and keeps only fields
+# needed through Week 10; note rate_30yr_fixed and year_month
+# are added later in Part E after the mortgage merge
+
+sold_keep     = [f for f in CORE_FIELDS if f in sold.columns]
+listings_keep = [f for f in CORE_FIELDS if f in listings.columns]
+
+missing_sold     = [f for f in CORE_FIELDS if f not in sold.columns]
+missing_listings = [f for f in CORE_FIELDS if f not in listings.columns]
+
+sold     = sold[sold_keep]
+listings = listings[listings_keep]
+
+print(f"Columns kept - sold     : {len(sold_keep)}")
+print(f"Columns kept - listings : {len(listings_keep)}")
+if missing_sold:
+    print(f"  Fields not in sold     : {missing_sold}")
+if missing_listings:
+    print(f"  Fields not in listings : {missing_listings}")
 print()
 
 # ============================================================
