@@ -1,1 +1,334 @@
+"""
+Week 4-5 - Data Cleaning and Preparation
+IDX Exchange MLS Analytics Program
+"""
 
+import pandas as pd
+import numpy as np
+import os
+
+# ============================================================
+# CONFIG
+# ============================================================
+DATA_FOLDER   = "/Users/qianyulu/Desktop/IDXexchange"
+OUTPUT_FOLDER = "/Users/qianyulu/Desktop/IDXexchange"
+
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# California coordinate bounds
+LAT_MIN, LAT_MAX = 32.0, 42.5
+LON_MIN, LON_MAX = -124.5, -114.0
+
+# ============================================================
+# STEP 1: Load datasets from Week 2-3
+# ============================================================
+print("=" * 55)
+print("LOADING DATASETS")
+print("=" * 55)
+
+sold     = pd.read_csv(os.path.join(DATA_FOLDER, "sold_enriched.csv"),     low_memory=False)
+listings = pd.read_csv(os.path.join(DATA_FOLDER, "listings_enriched.csv"), low_memory=False)
+
+print(f"sold_enriched.csv     loaded: {len(sold):>7,} rows  x  {sold.shape[1]} columns")
+print(f"listings_enriched.csv loaded: {len(listings):>7,} rows  x  {listings.shape[1]} columns")
+
+sold_original_rows     = len(sold)
+listings_original_rows = len(listings)
+print()
+
+# ============================================================
+# STEP 2: Convert date fields to datetime
+# ============================================================
+print("=" * 55)
+print("STEP 2: DATE FIELD CONVERSION")
+print("=" * 55)
+
+# Why: date fields loaded as strings by default;
+# must be datetime for comparison, flag creation, and time-series analysis
+
+date_fields_sold = [
+    "CloseDate", "PurchaseContractDate",
+    "ListingContractDate", "ContractStatusChangeDate"
+]
+date_fields_listings = [
+    "ListingContractDate", "CloseDate",
+    "PurchaseContractDate", "ContractStatusChangeDate"
+]
+
+for col in date_fields_sold:
+    if col in sold.columns:
+        sold[col] = pd.to_datetime(sold[col], format="mixed", errors="coerce")
+        print(f"  sold     [{col}] converted  |  nulls after: {sold[col].isnull().sum():,}")
+
+for col in date_fields_listings:
+    if col in listings.columns:
+        listings[col] = pd.to_datetime(listings[col], format="mixed", errors="coerce")
+        print(f"  listings [{col}] converted  |  nulls after: {listings[col].isnull().sum():,}")
+print()
+
+# ============================================================
+# STEP 3: Ensure numeric fields are properly typed
+# ============================================================
+print("=" * 55)
+print("STEP 3: NUMERIC TYPE CONFIRMATION")
+print("=" * 55)
+
+# Why: some numeric fields may have been read as object due to mixed content
+numeric_fields = [
+    "ClosePrice", "ListPrice", "OriginalListPrice",
+    "LivingArea", "LotSizeAcres", "BedroomsTotal",
+    "BathroomsTotalInteger", "DaysOnMarket", "YearBuilt",
+    "Latitude", "Longitude"
+]
+
+for col in numeric_fields:
+    if col in sold.columns:
+        sold[col] = pd.to_numeric(sold[col], errors="coerce")
+    if col in listings.columns:
+        listings[col] = pd.to_numeric(listings[col], errors="coerce")
+
+print("Numeric fields confirmed for both datasets:")
+print(f"  {numeric_fields}")
+print()
+
+# ============================================================
+# STEP 4: Flag invalid numeric values (do NOT delete yet)
+# ============================================================
+print("=" * 55)
+print("STEP 4: FLAG INVALID NUMERIC VALUES")
+print("=" * 55)
+
+# Why: flag first, delete later — preserves raw records while
+# identifying data quality issues for the deliverable summary
+
+def flag_invalid_numerics(df, label):
+    df["flag_invalid_close_price"]  = df["ClosePrice"] <= 0
+    df["flag_invalid_living_area"]  = df["LivingArea"]  <= 0
+    df["flag_negative_dom"]         = df["DaysOnMarket"] < 0
+    df["flag_invalid_bedrooms"]     = df["BedroomsTotal"] < 0
+    df["flag_invalid_bathrooms"]    = df["BathroomsTotalInteger"] < 0
+
+    flags = [
+        "flag_invalid_close_price",
+        "flag_invalid_living_area",
+        "flag_negative_dom",
+        "flag_invalid_bedrooms",
+        "flag_invalid_bathrooms",
+    ]
+
+    print(f"\n--- {label}: Invalid Numeric Flags ---")
+    for f in flags:
+        count = df[f].sum()
+        pct   = count / len(df) * 100
+        print(f"  {f:35s}  {count:>7,}  ({pct:.2f}%)")
+    return df
+
+sold     = flag_invalid_numerics(sold,     "SOLD")
+listings = flag_invalid_numerics(listings, "LISTINGS")
+print()
+
+# ============================================================
+# STEP 5: Date consistency flags
+# ============================================================
+print("=" * 55)
+print("STEP 5: DATE CONSISTENCY FLAGS")
+print("=" * 55)
+
+# Why: logical order must be ListingContractDate → PurchaseContractDate → CloseDate
+# Records violating this order are data quality issues, not valid transactions
+
+def flag_date_consistency(df, label):
+    has_listing  = "ListingContractDate"   in df.columns
+    has_purchase = "PurchaseContractDate"  in df.columns
+    has_close    = "CloseDate"             in df.columns
+
+    # listing_after_close_flag: CloseDate before ListingContractDate
+    if has_listing and has_close:
+        df["listing_after_close_flag"] = (
+            df["CloseDate"] < df["ListingContractDate"]
+        )
+    else:
+        df["listing_after_close_flag"] = False
+
+    # purchase_after_close_flag: CloseDate before PurchaseContractDate
+    if has_purchase and has_close:
+        df["purchase_after_close_flag"] = (
+            df["CloseDate"] < df["PurchaseContractDate"]
+        )
+    else:
+        df["purchase_after_close_flag"] = False
+
+    # negative_timeline_flag: PurchaseContractDate before ListingContractDate
+    if has_listing and has_purchase:
+        df["negative_timeline_flag"] = (
+            df["PurchaseContractDate"] < df["ListingContractDate"]
+        )
+    else:
+        df["negative_timeline_flag"] = False
+
+    date_flags = [
+        "listing_after_close_flag",
+        "purchase_after_close_flag",
+        "negative_timeline_flag",
+    ]
+
+    print(f"\n--- {label}: Date Consistency Flags ---")
+    for f in date_flags:
+        count = df[f].sum()
+        pct   = count / len(df) * 100
+        print(f"  {f:35s}  {count:>7,}  ({pct:.2f}%)")
+    return df
+
+sold     = flag_date_consistency(sold,     "SOLD")
+listings = flag_date_consistency(listings, "LISTINGS")
+print()
+
+# ============================================================
+# STEP 6: Geographic data quality flags
+# ============================================================
+print("=" * 55)
+print("STEP 6: GEOGRAPHIC DATA QUALITY FLAGS")
+print("=" * 55)
+
+# Why: invalid coordinates break any map-based Tableau visualization
+# California: Latitude 32-42.5N, Longitude -124.5 to -114.0 (always negative)
+
+def flag_geo_issues(df, label):
+    has_lat = "Latitude"  in df.columns
+    has_lon = "Longitude" in df.columns
+
+    if has_lat and has_lon:
+        # Missing coordinates
+        df["flag_missing_coords"] = (
+            df["Latitude"].isnull() | df["Longitude"].isnull()
+        )
+        # Sentinel zero values
+        df["flag_zero_coords"] = (
+            (df["Latitude"] == 0) | (df["Longitude"] == 0)
+        )
+        # Longitude > 0 — California should always be negative
+        df["flag_positive_longitude"] = df["Longitude"] > 0
+
+        # Out-of-California bounds (only for non-null, non-zero rows)
+        valid_mask = (
+            ~df["flag_missing_coords"] &
+            ~df["flag_zero_coords"]
+        )
+        df["flag_out_of_state_coords"] = False
+        df.loc[valid_mask, "flag_out_of_state_coords"] = (
+            (df.loc[valid_mask, "Latitude"]  < LAT_MIN) |
+            (df.loc[valid_mask, "Latitude"]  > LAT_MAX) |
+            (df.loc[valid_mask, "Longitude"] < LON_MIN) |
+            (df.loc[valid_mask, "Longitude"] > LON_MAX)
+        )
+
+        # Any geo issue
+        df["flag_any_geo_issue"] = (
+            df["flag_missing_coords"]     |
+            df["flag_zero_coords"]        |
+            df["flag_positive_longitude"] |
+            df["flag_out_of_state_coords"]
+        )
+    else:
+        for f in ["flag_missing_coords", "flag_zero_coords",
+                  "flag_positive_longitude", "flag_out_of_state_coords",
+                  "flag_any_geo_issue"]:
+            df[f] = False
+
+    geo_flags = [
+        "flag_missing_coords",
+        "flag_zero_coords",
+        "flag_positive_longitude",
+        "flag_out_of_state_coords",
+        "flag_any_geo_issue",
+    ]
+
+    print(f"\n--- {label}: Geographic Data Quality Flags ---")
+    for f in geo_flags:
+        count = df[f].sum()
+        pct   = count / len(df) * 100
+        print(f"  {f:35s}  {count:>7,}  ({pct:.2f}%)")
+    return df
+
+sold     = flag_geo_issues(sold,     "SOLD")
+listings = flag_geo_issues(listings, "LISTINGS")
+print()
+
+# ============================================================
+# STEP 7: Remove clearly invalid records
+# ============================================================
+print("=" * 55)
+print("STEP 7: REMOVE INVALID RECORDS")
+print("=" * 55)
+
+# Why: records with ClosePrice <= 0 or LivingArea <= 0 are not valid
+# residential transactions and will distort all downstream metrics.
+# DaysOnMarket < 0 is logically impossible.
+# We keep date/geo flagged records in the main dataset but
+# save a separate clean-filtered version for analysis.
+
+def remove_invalid_records(df, label):
+    before = len(df)
+
+    # Hard removes — logically impossible values only
+    df = df[
+        ~df["flag_invalid_close_price"] &
+        ~df["flag_invalid_living_area"] &
+        ~df["flag_negative_dom"]
+    ].copy()
+
+    after = len(df)
+    print(f"  [{label}] Rows before removal: {before:>7,}")
+    print(f"  [{label}] Rows after  removal: {after:>7,}")
+    print(f"  [{label}] Rows removed        : {before - after:>7,}")
+    print()
+    return df
+
+sold     = remove_invalid_records(sold,     "SOLD")
+listings = remove_invalid_records(listings, "LISTINGS")
+
+# ============================================================
+# STEP 8: Final summary
+# ============================================================
+print("=" * 55)
+print("STEP 8: FINAL SUMMARY")
+print("=" * 55)
+
+print(f"SOLD:")
+print(f"  Original rows : {sold_original_rows:>7,}")
+print(f"  Final rows    : {len(sold):>7,}")
+print(f"  Rows removed  : {sold_original_rows - len(sold):>7,}")
+print(f"  Final columns : {sold.shape[1]}")
+print()
+print(f"LISTINGS:")
+print(f"  Original rows : {listings_original_rows:>7,}")
+print(f"  Final rows    : {len(listings):>7,}")
+print(f"  Rows removed  : {listings_original_rows - len(listings):>7,}")
+print(f"  Final columns : {listings.shape[1]}")
+print()
+
+# Date field type confirmation
+print("Date field types (sold):")
+for col in ["CloseDate", "PurchaseContractDate", "ListingContractDate"]:
+    if col in sold.columns:
+        print(f"  {col:35s}  {sold[col].dtype}")
+print()
+
+# ============================================================
+# STEP 9: Save outputs
+# ============================================================
+print("=" * 55)
+print("SAVING OUTPUT FILES")
+print("=" * 55)
+
+# Full flagged dataset (all records with flag columns)
+sold_flagged_path     = os.path.join(OUTPUT_FOLDER, "sold_flagged.csv")
+listings_flagged_path = os.path.join(OUTPUT_FOLDER, "listings_flagged.csv")
+
+sold.to_csv(sold_flagged_path,         index=False)
+listings.to_csv(listings_flagged_path, index=False)
+
+print(f"sold_flagged.csv     saved -> {sold_flagged_path}")
+print(f"listings_flagged.csv saved -> {listings_flagged_path}")
+print()
+print("Week 4-5 complete!")
