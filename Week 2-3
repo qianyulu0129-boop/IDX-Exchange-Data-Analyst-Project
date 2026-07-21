@@ -12,28 +12,15 @@ import os
 # ============================================================
 # CONFIG
 # ============================================================
-DATA_FOLDER   = "/Users/qianyulu/Desktop/IDXexchange"
-OUTPUT_FOLDER = "/Users/qianyulu/Desktop/IDXexchange"
+DATA_FOLDER   = "."
+OUTPUT_FOLDER = "."
 
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # ============================================================
-# Core fields to keep 
+# Core fields to keep (per mentor's instruction)
 # ============================================================
-CORE_FIELDS = [
-    "ClosePrice", "ListPrice", "OriginalListPrice",
-    "LivingArea", "LotSizeAcres", "BedroomsTotal",
-    "BathroomsTotalInteger", "DaysOnMarket", "YearBuilt",
-    "City", "CountyOrParish", "PostalCode",
-    "PropertyType", "PropertySubType",
-    "ListOfficeName", "BuyerOfficeName",
-    "ListAgentFirstName", "ListAgentLastName",
-    "ListAgentEmail", "ListAgentFullName",
-    "CloseDate", "ListingContractDate", "PurchaseContractDate",
-    "WaterfrontYN", "BasementYN", "PoolPrivateYN", "ViewYN",
-]
-
-# 9 numeric fields for charts 
+# 9 numeric fields for distribution analysis (per mentor's instruction)
 NUMERIC_FIELDS = [
     "ClosePrice", "ListPrice", "OriginalListPrice",
     "LivingArea", "LotSizeAcres", "BedroomsTotal",
@@ -66,26 +53,6 @@ if dup_cols_sold:
 if dup_cols_listings:
     listings = listings.drop(columns=dup_cols_listings)
     print(f"Removed duplicate columns from listings : {dup_cols_listings}")
-print()
-
-# ============================================================
-# STEP 1C: Keep core fields only
-# ============================================================
-sold_core_fields     = [f for f in CORE_FIELDS if f in sold.columns]
-listings_core_fields = [f for f in CORE_FIELDS if f in listings.columns]
-
-missing_sold     = [f for f in CORE_FIELDS if f not in sold.columns]
-missing_listings = [f for f in CORE_FIELDS if f not in listings.columns]
-
-sold     = sold[sold_core_fields]
-listings = listings[listings_core_fields]
-
-print(f"Columns kept - sold     : {len(sold_core_fields)}")
-print(f"Columns kept - listings : {len(listings_core_fields)}")
-if missing_sold:
-    print(f"  Core fields NOT found in sold     : {missing_sold}")
-if missing_listings:
-    print(f"  Core fields NOT found in listings : {missing_listings}")
 print()
 
 # ============================================================
@@ -145,6 +112,30 @@ def missing_value_report(df, label):
 sold_missing     = missing_value_report(sold,     "SOLD")
 listings_missing = missing_value_report(listings, "LISTINGS")
 
+# --- Drop columns with >90% missing values (per mentor's instruction) ---
+sold_drop_cols     = sold_missing[sold_missing["null_pct"] > 90].index.tolist()
+listings_drop_cols = listings_missing[listings_missing["null_pct"] > 90].index.tolist()
+
+if sold_drop_cols:
+    sold = sold.drop(columns=sold_drop_cols)
+    print(f"Dropped {len(sold_drop_cols)} columns from sold (>90% missing):")
+    for c in sold_drop_cols:
+        print(f"  - {c}")
+else:
+    print("No columns dropped from sold.")
+
+if listings_drop_cols:
+    listings = listings.drop(columns=listings_drop_cols)
+    print(f"\nDropped {len(listings_drop_cols)} columns from listings (>90% missing):")
+    for c in listings_drop_cols:
+        print(f"  - {c}")
+else:
+    print("No columns dropped from listings.")
+
+print(f"\nAfter drop - sold     : {sold.shape[1]} columns remaining")
+print(f"After drop - listings : {listings.shape[1]} columns remaining")
+print()
+
 # ============================================================
 # PART C: NUMERIC DISTRIBUTION REVIEW (all 9 fields)
 # ============================================================
@@ -154,11 +145,21 @@ print("=" * 55)
 
 available_numeric = [f for f in NUMERIC_FIELDS if f in sold.columns]
 
-print("--- SOLD: Numeric Summary (all 9 fields) ---")
-sold_numeric_summary = sold[available_numeric].describe(
+# Deliverable requires summary for ClosePrice, LivingArea, DaysOnMarket
+deliverable_fields = ["ClosePrice", "LivingArea", "DaysOnMarket"]
+print("--- SOLD: Numeric Distribution Summary (ClosePrice, LivingArea, DaysOnMarket) ---")
+sold_numeric_summary = sold[deliverable_fields].describe(
     percentiles=[0.05, 0.25, 0.5, 0.75, 0.95]
 ).T
 print(sold_numeric_summary.to_string())
+print()
+
+# Full 9-field summary for reference
+print("--- SOLD: Full Numeric Summary (all 9 fields) ---")
+sold_full_summary = sold[available_numeric].describe(
+    percentiles=[0.05, 0.25, 0.5, 0.75, 0.95]
+).T
+print(sold_full_summary.to_string())
 print()
 
 # --- Histograms: all 9 fields in a 3x3 grid ---
