@@ -1,6 +1,7 @@
 """
 Week 2-3 - Dataset Structuring, Validation, and Mortgage Rate Enrichment
 IDX Exchange MLS Analytics Program
+Confidential - For Intern Use Only
 """
 
 import pandas as pd
@@ -11,12 +12,36 @@ import os
 # ============================================================
 # CONFIG
 # ============================================================
-DATA_FOLDER = "/Users/qianyulu/Desktop/IDXexchange"
-OUTPUT_FOLDER = "/Users/qianyulu/Desktop/IDXexchange"
+DATA_FOLDER   = "."
+OUTPUT_FOLDER = "."
+
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 # ============================================================
-# STEP 1: Load the combined datasets from Week 1
+# Core fields to keep (per mentor's instruction)
+# ============================================================
+CORE_FIELDS = [
+    "ClosePrice", "ListPrice", "OriginalListPrice",
+    "LivingArea", "LotSizeAcres", "BedroomsTotal",
+    "BathroomsTotalInteger", "DaysOnMarket", "YearBuilt",
+    "City", "CountyOrParish", "PostalCode",
+    "PropertyType", "PropertySubType",
+    "ListOfficeName", "BuyerOfficeName",
+    "ListAgentFirstName", "ListAgentLastName",
+    "ListAgentEmail", "ListAgentFullName",
+    "CloseDate", "ListingContractDate", "PurchaseContractDate",
+    "WaterfrontYN", "BasementYN", "PoolPrivateYN", "ViewYN",
+]
+
+# 9 numeric fields for charts 
+NUMERIC_FIELDS = [
+    "ClosePrice", "ListPrice", "OriginalListPrice",
+    "LivingArea", "LotSizeAcres", "BedroomsTotal",
+    "BathroomsTotalInteger", "DaysOnMarket", "YearBuilt"
+]
+
+# ============================================================
+# STEP 1: Load datasets
 # ============================================================
 print("=" * 55)
 print("LOADING DATASETS")
@@ -30,18 +55,50 @@ print(f"listings.csv loaded: {len(listings):>7,} rows  x  {listings.shape[1]} co
 print()
 
 # ============================================================
+# STEP 1B: Remove duplicate columns (e.g. CloseDate.1)
+# ============================================================
+dup_cols_sold     = [c for c in sold.columns     if c.endswith(".1")]
+dup_cols_listings = [c for c in listings.columns if c.endswith(".1")]
+
+if dup_cols_sold:
+    sold = sold.drop(columns=dup_cols_sold)
+    print(f"Removed duplicate columns from sold     : {dup_cols_sold}")
+if dup_cols_listings:
+    listings = listings.drop(columns=dup_cols_listings)
+    print(f"Removed duplicate columns from listings : {dup_cols_listings}")
+print()
+
+# ============================================================
+# STEP 1C: Keep core fields only
+# ============================================================
+sold_core_fields     = [f for f in CORE_FIELDS if f in sold.columns]
+listings_core_fields = [f for f in CORE_FIELDS if f in listings.columns]
+
+missing_sold     = [f for f in CORE_FIELDS if f not in sold.columns]
+missing_listings = [f for f in CORE_FIELDS if f not in listings.columns]
+
+sold     = sold[sold_core_fields]
+listings = listings[listings_core_fields]
+
+print(f"Columns kept - sold     : {len(sold_core_fields)}")
+print(f"Columns kept - listings : {len(listings_core_fields)}")
+if missing_sold:
+    print(f"  Core fields NOT found in sold     : {missing_sold}")
+if missing_listings:
+    print(f"  Core fields NOT found in listings : {missing_listings}")
+print()
+
+# ============================================================
 # PART A: DATASET UNDERSTANDING
 # ============================================================
 print("=" * 55)
 print("PART A: DATASET UNDERSTANDING")
 print("=" * 55)
 
-# --- A1: Basic structure ---
 print("--- SOLD: Column Data Types ---")
 print(sold.dtypes.to_string())
 print()
 
-# --- A2: PropertyType breakdown ---
 print("--- SOLD: PropertyType Breakdown ---")
 print(sold["PropertyType"].value_counts())
 print()
@@ -50,7 +107,6 @@ print("--- LISTINGS: PropertyType Breakdown ---")
 print(listings["PropertyType"].value_counts())
 print()
 
-# --- A3: Confirm both are already Residential-only (from Week 1) ---
 assert (sold["PropertyType"] == "Residential").all(), \
     "sold.csv contains non-Residential rows!"
 assert (listings["PropertyType"] == "Residential").all(), \
@@ -76,7 +132,6 @@ def missing_value_report(df, label):
     print(f"\n--- {label}: Missing Value Report ---")
     print(report.to_string())
 
-    # Flag columns above 90% missing
     high_missing = report[report["null_pct"] > 90]
     if not high_missing.empty:
         print(f"\n  Columns with >90% missing values ({len(high_missing)}):")
@@ -91,56 +146,54 @@ sold_missing     = missing_value_report(sold,     "SOLD")
 listings_missing = missing_value_report(listings, "LISTINGS")
 
 # ============================================================
-# PART C: NUMERIC DISTRIBUTION REVIEW
+# PART C: NUMERIC DISTRIBUTION REVIEW (all 9 fields)
 # ============================================================
 print("=" * 55)
 print("PART C: NUMERIC DISTRIBUTION REVIEW")
 print("=" * 55)
 
-numeric_fields = [
-    "ClosePrice", "ListPrice", "OriginalListPrice",
-    "LivingArea", "LotSizeAcres", "BedroomsTotal",
-    "BathroomsTotalInteger", "DaysOnMarket", "YearBuilt"
-]
+available_numeric = [f for f in NUMERIC_FIELDS if f in sold.columns]
 
-print("--- SOLD: Numeric Summary ---")
-sold_numeric_summary = sold[numeric_fields].describe(
+print("--- SOLD: Numeric Summary (all 9 fields) ---")
+sold_numeric_summary = sold[available_numeric].describe(
     percentiles=[0.05, 0.25, 0.5, 0.75, 0.95]
 ).T
 print(sold_numeric_summary.to_string())
 print()
 
-# --- Histograms for key fields ---
-fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-fig.suptitle("SOLD - Key Numeric Distributions", fontsize=13)
+# --- Histograms: all 9 fields in a 3x3 grid ---
+fig, axes = plt.subplots(3, 3, figsize=(18, 12))
+fig.suptitle("SOLD - Numeric Distributions (all 9 fields)", fontsize=14)
+axes = axes.flatten()
 
-sold["ClosePrice"].dropna().plot(kind="hist", bins=50, ax=axes[0], color="steelblue")
-axes[0].set_title("ClosePrice")
-axes[0].set_xlabel("$")
+colors = ["steelblue", "seagreen", "coral", "purple",
+          "darkorange", "teal", "crimson", "olive", "slategray"]
 
-sold["LivingArea"].dropna().plot(kind="hist", bins=50, ax=axes[1], color="seagreen")
-axes[1].set_title("LivingArea (sqft)")
+for i, field in enumerate(available_numeric):
+    sold[field].dropna().plot(kind="hist", bins=50, ax=axes[i], color=colors[i])
+    axes[i].set_title(field)
+    axes[i].set_xlabel("")
 
-sold["DaysOnMarket"].dropna().plot(kind="hist", bins=50, ax=axes[2], color="coral")
-axes[2].set_title("DaysOnMarket")
+# Hide any unused subplots
+for j in range(len(available_numeric), len(axes)):
+    axes[j].set_visible(False)
 
 plt.tight_layout()
 plt.savefig(os.path.join(OUTPUT_FOLDER, "week2_numeric_distributions.png"), dpi=150)
 plt.close()
-print("Histogram saved -> week2_numeric_distributions.png\n")
+print("Histograms saved -> week2_numeric_distributions.png\n")
 
-# --- Boxplots ---
-fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-fig.suptitle("SOLD - Boxplots (outlier check)", fontsize=13)
+# --- Boxplots: all 9 fields in a 3x3 grid ---
+fig, axes = plt.subplots(3, 3, figsize=(18, 12))
+fig.suptitle("SOLD - Boxplots / Outlier Check (all 9 fields)", fontsize=14)
+axes = axes.flatten()
 
-sold["ClosePrice"].dropna().plot(kind="box", ax=axes[0])
-axes[0].set_title("ClosePrice")
+for i, field in enumerate(available_numeric):
+    sold[field].dropna().plot(kind="box", ax=axes[i])
+    axes[i].set_title(field)
 
-sold["LivingArea"].dropna().plot(kind="box", ax=axes[1])
-axes[1].set_title("LivingArea")
-
-sold["DaysOnMarket"].dropna().plot(kind="box", ax=axes[2])
-axes[2].set_title("DaysOnMarket")
+for j in range(len(available_numeric), len(axes)):
+    axes[j].set_visible(False)
 
 plt.tight_layout()
 plt.savefig(os.path.join(OUTPUT_FOLDER, "week2_boxplots.png"), dpi=150)
@@ -148,7 +201,7 @@ plt.close()
 print("Boxplots saved -> week2_boxplots.png\n")
 
 # ============================================================
-# PART D: SUGGESTED EDA QUESTIONS
+# PART D: EDA QUESTIONS
 # ============================================================
 print("=" * 55)
 print("PART D: EDA QUESTIONS")
@@ -174,15 +227,15 @@ print(f"Sold ABOVE list price : {above:>6,}  ({above/total_valid*100:.1f}%)")
 print(f"Sold BELOW list price : {below:>6,}  ({below/total_valid*100:.1f}%)")
 print()
 
-# Q4: Date consistency issues (close date before listing date)
+# Q4: Date consistency check
 sold_dates = sold.dropna(subset=["CloseDate", "ListingContractDate"]).copy()
-sold_dates["CloseDate"]           = pd.to_datetime(sold_dates["CloseDate"], format="mixed")  # 改这行
-sold_dates["ListingContractDate"] = pd.to_datetime(sold_dates["ListingContractDate"], format="mixed")  # 改这行
+sold_dates["CloseDate"]           = pd.to_datetime(sold_dates["CloseDate"],           format="mixed")
+sold_dates["ListingContractDate"] = pd.to_datetime(sold_dates["ListingContractDate"], format="mixed")
 date_issues = (sold_dates["CloseDate"] < sold_dates["ListingContractDate"]).sum()
 print(f"Records where CloseDate < ListingContractDate: {date_issues:,}")
 print()
 
-# Q5: Top counties by median close price
+# Q5: Top 10 counties by median close price
 print("--- Top 10 Counties by Median ClosePrice ---")
 county_median = (
     sold.groupby("CountyOrParish")["ClosePrice"]
@@ -194,13 +247,12 @@ print(county_median.apply(lambda x: f"${x:,.0f}").to_string())
 print()
 
 # ============================================================
-# PART E: MORTGAGE RATE ENRICHMENT (FRED API)
+# PART E: MORTGAGE RATE ENRICHMENT
 # ============================================================
 print("=" * 55)
 print("PART E: MORTGAGE RATE ENRICHMENT")
 print("=" * 55)
 
-# Step 1: Fetch MORTGAGE30US from FRED (no API key needed)
 print("Fetching MORTGAGE30US from FRED...")
 url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=MORTGAGE30US"
 mortgage = pd.read_csv(url, parse_dates=["observation_date"])
@@ -209,7 +261,6 @@ print(f"Fetched {len(mortgage):,} weekly observations")
 print(f"Rate range: {mortgage['date'].min().date()} to {mortgage['date'].max().date()}")
 print()
 
-# Step 2: Resample weekly to monthly average
 mortgage["year_month"] = mortgage["date"].dt.to_period("M")
 mortgage_monthly = (
     mortgage.groupby("year_month")["rate_30yr_fixed"]
@@ -221,27 +272,21 @@ print("--- Monthly Mortgage Rates (sample) ---")
 print(mortgage_monthly.tail(6).to_string(index=False))
 print()
 
-# Step 3: Create year_month join key on MLS datasets
-sold["year_month"] = pd.to_datetime(sold["CloseDate"], format="mixed").dt.to_period("M")
+sold["year_month"]     = pd.to_datetime(sold["CloseDate"],             format="mixed").dt.to_period("M")
 listings["year_month"] = pd.to_datetime(listings["ListingContractDate"], format="mixed").dt.to_period("M")
 
-
-# Step 4: Merge
 sold_enriched     = sold.merge(mortgage_monthly,     on="year_month", how="left")
 listings_enriched = listings.merge(mortgage_monthly, on="year_month", how="left")
 
-# Step 5: Validate merge
 sold_null_rates     = sold_enriched["rate_30yr_fixed"].isnull().sum()
 listings_null_rates = listings_enriched["rate_30yr_fixed"].isnull().sum()
-print(f"Null rate values after merge - sold: {sold_null_rates}  |  "
-      f"listings: {listings_null_rates}")
+print(f"Null rate values after merge - sold: {sold_null_rates}  |  listings: {listings_null_rates}")
 if sold_null_rates == 0 and listings_null_rates == 0:
     print("Merge validation passed: no null rates.")
 else:
-    print("WARNING: Some rows did not match a mortgage rate. Check year_month alignment.")
+    print("WARNING: Some rows did not match a mortgage rate.")
 print()
 
-# Preview
 print("--- Sold + Rate Preview ---")
 print(sold_enriched[["CloseDate", "year_month", "ClosePrice",
                       "rate_30yr_fixed"]].head(5).to_string(index=False))
@@ -262,5 +307,7 @@ listings_enriched.to_csv(listings_out, index=False)
 
 print(f"sold_enriched.csv     saved  ->  {sold_out}")
 print(f"listings_enriched.csv saved  ->  {listings_out}")
+print(f"  sold_enriched     : {len(sold_enriched):>7,} rows  x  {sold_enriched.shape[1]} columns")
+print(f"  listings_enriched : {len(listings_enriched):>7,} rows  x  {listings_enriched.shape[1]} columns")
 print()
 print("Week 2-3 complete!")
