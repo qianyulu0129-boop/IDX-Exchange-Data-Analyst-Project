@@ -12,8 +12,8 @@ import os
 # ============================================================
 # CONFIG
 # ============================================================
-DATA_FOLDER   = "."
-OUTPUT_FOLDER = "."
+DATA_FOLDER   = "/Users/qianyulu/Desktop/IDXexchange"
+OUTPUT_FOLDER = "/Users/qianyulu/Desktop/IDXexchange"
 
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
