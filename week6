@@ -1,0 +1,279 @@
+"""
+Week 6 - Feature Engineering and Market Metrics
+"""
+
+import pandas as pd
+import numpy as np
+import os
+
+# ============================================================
+# CONFIG
+# ============================================================
+DATA_FOLDER   = "/Users/qianyulu/Desktop/IDXexchange"
+OUTPUT_FOLDER = "/Users/qianyulu/Desktop/IDXexchange"
+
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# ============================================================
+# STEP 1: Load clean dataset from Week 4-5
+# ============================================================
+print("=" * 55)
+print("STEP 1: LOADING DATASET")
+print("=" * 55)
+
+sold = pd.read_csv(os.path.join(DATA_FOLDER, "sold_clean.csv"), low_memory=False)
+
+print(f"sold_clean.csv loaded: {len(sold):>7,} rows  x  {sold.shape[1]} columns")
+print()
+
+# Convert date fields to datetime
+date_fields = ["CloseDate", "PurchaseContractDate", "ListingContractDate"]
+for col in date_fields:
+    if col in sold.columns:
+        sold[col] = pd.to_datetime(sold[col], format="mixed", errors="coerce")
+
+# Convert numeric fields
+numeric_fields = [
+    "ClosePrice", "OriginalListPrice", "LivingArea", "DaysOnMarket"
+]
+for col in numeric_fields:
+    if col in sold.columns:
+        sold[col] = pd.to_numeric(sold[col], errors="coerce")
+
+print("Date and numeric fields confirmed.\n")
+
+# ============================================================
+# STEP 2: Feature Engineering — 7 Key Metrics
+# ============================================================
+print("=" * 55)
+print("STEP 2: FEATURE ENGINEERING")
+print("=" * 55)
+
+# --- Metric 1: Price Ratio (negotiation strength) ---
+# Formula: ClosePrice / OriginalListPrice
+# Purpose: measures how close the final price was to the original asking price
+sold["price_ratio"] = (
+    sold["ClosePrice"] / sold["OriginalListPrice"]
+).round(4)
+print(f"price_ratio          created  |  nulls: {sold['price_ratio'].isnull().sum():,}")
+
+# --- Metric 2: Price Per Square Foot (PPSF) ---
+# Formula: ClosePrice / LivingArea
+# Purpose: normalizes price across properties of different sizes
+sold["price_per_sqft"] = (
+    sold["ClosePrice"] / sold["LivingArea"]
+).round(2)
+print(f"price_per_sqft       created  |  nulls: {sold['price_per_sqft'].isnull().sum():,}")
+
+# --- Metric 3: Days on Market ---
+# Formula: raw DaysOnMarket field (already exists)
+# Purpose: time-to-sell indicator
+print(f"days_on_market       exists   |  nulls: {sold['DaysOnMarket'].isnull().sum():,}")
+
+# --- Metric 4: Year / Month / YrMo (time-series variables) ---
+# Formula: derived from CloseDate
+# Purpose: enables monthly and yearly trend analysis in Tableau
+sold["close_year"]  = sold["CloseDate"].dt.year
+sold["close_month"] = sold["CloseDate"].dt.month
+sold["close_yrmo"]  = sold["CloseDate"].dt.to_period("M").astype(str)
+print(f"close_year/month/yrmo created  |  nulls: {sold['close_yrmo'].isnull().sum():,}")
+
+# --- Metric 5: Close to Original List Ratio ---
+# Formula: ClosePrice / OriginalListPrice (same as price_ratio)
+# Purpose: explicitly captures full price reduction history vs. original ask
+sold["close_to_orig_list_ratio"] = sold["price_ratio"]
+print(f"close_to_orig_list_ratio created (same as price_ratio)")
+
+# --- Metric 6: Listing to Contract Days ---
+# Formula: PurchaseContractDate - ListingContractDate
+# Purpose: measures time from listing to accepted offer
+sold["listing_to_contract_days"] = (
+    sold["PurchaseContractDate"] - sold["ListingContractDate"]
+).dt.days
+print(f"listing_to_contract_days created  |  nulls: {sold['listing_to_contract_days'].isnull().sum():,}")
+
+# --- Metric 7: Contract to Close Days ---
+# Formula: CloseDate - PurchaseContractDate
+# Purpose: measures escrow and closing period duration
+sold["contract_to_close_days"] = (
+    sold["CloseDate"] - sold["PurchaseContractDate"]
+).dt.days
+print(f"contract_to_close_days   created  |  nulls: {sold['contract_to_close_days'].isnull().sum():,}")
+
+print()
+
+# --- Sample output table ---
+print("--- Sample Output: New Metric Columns (5 rows) ---")
+sample_cols = [
+    "CloseDate", "ClosePrice", "OriginalListPrice", "LivingArea",
+    "price_ratio", "price_per_sqft", "close_yrmo",
+    "listing_to_contract_days", "contract_to_close_days"
+]
+available_sample = [c for c in sample_cols if c in sold.columns]
+print(sold[available_sample].head(5).to_string(index=False))
+print()
+
+# ============================================================
+# STEP 3: School District Join (using Latitude / Longitude)
+# ============================================================
+print("=" * 55)
+print("STEP 3: SCHOOL DISTRICT JOIN")
+print("=" * 55)
+
+try:
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    # Download GeoJSON from CA Open Data
+    SCHOOL_DISTRICT_URL = (
+        "https://gis.data.ca.gov/api/download/v1/items/"
+        "b0e3b936426a47ce9d9a2e77e2bb86cc/geojson?layers=0"
+    )
+
+    print("Downloading California school district boundaries...")
+    districts = gpd.read_file(SCHOOL_DISTRICT_URL)
+    print(f"School districts loaded: {len(districts):,} records")
+    print(f"District columns: {list(districts.columns[:8])}")
+    print()
+
+    # Build GeoDataFrame from sold coordinates
+    sold_valid_geo = sold.dropna(subset=["Latitude", "Longitude"]).copy()
+    geometry = [
+        Point(lon, lat)
+        for lon, lat in zip(sold_valid_geo["Longitude"], sold_valid_geo["Latitude"])
+    ]
+    sold_gdf = gpd.GeoDataFrame(sold_valid_geo, geometry=geometry, crs="EPSG:4326")
+
+    # Reproject districts to match CRS
+    districts = districts.to_crs("EPSG:4326")
+
+    # Identify the district name column
+    name_candidates = ["DistrictName", "DISTNAME", "NAME", "District_Name", "LEAName"]
+    district_name_col = next(
+        (c for c in name_candidates if c in districts.columns), None
+    )
+    if district_name_col is None:
+        district_name_col = districts.columns[1]
+        print(f"Using column '{district_name_col}' as district name.")
+
+    # Keep only Unified districts to avoid duplicates
+    # (elementary + high school districts overlap the same area)
+    if "DistrictType" in districts.columns:
+        unified = districts[districts["DistrictType"] == "Unified"].copy()
+        print(f"Filtered to Unified districts: {len(unified):,}")
+    else:
+        unified = districts.copy()
+        print("DistrictType column not found, using all districts.")
+
+    # Spatial join
+    print("Running spatial join...")
+    joined = gpd.sjoin(
+        sold_gdf,
+        unified[[district_name_col, "geometry"]],
+        how="left",
+        predicate="within"
+    )
+
+    # Map results back to sold
+    sold["school_district"] = None
+    sold.loc[sold_valid_geo.index, "school_district"] = (
+        joined[district_name_col].values
+    )
+
+    matched     = sold["school_district"].notna().sum()
+    not_matched = sold["school_district"].isna().sum()
+    print(f"School district matched     : {matched:,}")
+    print(f"School district not matched : {not_matched:,}")
+    print()
+
+    print("--- Top 10 School Districts by Transaction Count ---")
+    print(sold["school_district"].value_counts().head(10).to_string())
+    print()
+
+except ImportError:
+    print("geopandas not installed.")
+    print("Install with: pip install geopandas")
+    print("Skipping school district join — school_district column set to null.\n")
+    sold["school_district"] = None
+
+except Exception as e:
+    print(f"School district join failed: {e}")
+    print("Skipping — school_district column set to null.\n")
+    sold["school_district"] = None
+
+# ============================================================
+# STEP 4: Segment Analysis
+# ============================================================
+print("=" * 55)
+print("STEP 4: SEGMENT ANALYSIS")
+print("=" * 55)
+
+def segment_summary(df, group_col, label):
+    """Generate summary stats grouped by a single dimension."""
+    if group_col not in df.columns:
+        print(f"  [{label}] Column '{group_col}' not found — skipping.")
+        return
+
+    summary = (
+        df.groupby(group_col)
+        .agg(
+            transaction_count = ("ClosePrice",              "count"),
+            median_close_price = ("ClosePrice",             "median"),
+            avg_close_price    = ("ClosePrice",             "mean"),
+            median_ppsf        = ("price_per_sqft",         "median"),
+            median_dom         = ("DaysOnMarket",           "median"),
+            avg_price_ratio    = ("price_ratio",            "mean"),
+        )
+        .sort_values("transaction_count", ascending=False)
+        .round(2)
+    )
+
+    print(f"\n--- {label}: Segment Summary (top 10) ---")
+    print(summary.head(10).to_string())
+    print()
+    return summary
+
+# Segment 1: PropertyType and PropertySubType
+seg_subtype  = segment_summary(sold, "PropertySubType",  "PropertySubType")
+
+# Segment 2: CountyOrParish
+seg_county   = segment_summary(sold, "CountyOrParish",   "CountyOrParish")
+
+# Segment 3: MLSAreaMajor
+seg_mls_area = segment_summary(sold, "MLSAreaMajor",     "MLSAreaMajor")
+
+# Segment 4: ListOfficeName (competitive intelligence)
+seg_list_off = segment_summary(sold, "ListOfficeName",   "ListOfficeName")
+
+# Segment 5: BuyerOfficeName (competitive intelligence)
+seg_buy_off  = segment_summary(sold, "BuyerOfficeName",  "BuyerOfficeName")
+
+# Segment 6: YrMo time series
+seg_yrmo     = segment_summary(sold, "close_yrmo",       "YrMo (monthly trend)")
+
+# ============================================================
+# STEP 5: Save output
+# ============================================================
+print("=" * 55)
+print("STEP 5: SAVING OUTPUT")
+print("=" * 55)
+
+output_path = os.path.join(OUTPUT_FOLDER, "sold_featured.csv")
+sold.to_csv(output_path, index=False)
+
+print(f"sold_featured.csv saved -> {output_path}")
+print(f"  Rows    : {len(sold):,}")
+print(f"  Columns : {sold.shape[1]}")
+print()
+print("New columns added:")
+new_cols = [
+    "price_ratio", "price_per_sqft", "close_year", "close_month",
+    "close_yrmo", "close_to_orig_list_ratio",
+    "listing_to_contract_days", "contract_to_close_days",
+    "school_district"
+]
+for col in new_cols:
+    if col in sold.columns:
+        print(f"  + {col}")
+print()
+print("Week 6 complete!")
