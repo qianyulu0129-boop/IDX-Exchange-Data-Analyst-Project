@@ -1,0 +1,201 @@
+"""
+Week 7 - Outlier Detection and Data Quality
+
+Method: Interquartile Range (IQR)
+- Flag extreme values rather than deleting outright
+- Apply business rules for always-invalid values
+- Save both a full flagged dataset and a clean filtered dataset
+- Include written comparison of size and median values before/after
+"""
+
+import pandas as pd
+import numpy as np
+import os
+
+# ============================================================
+# CONFIG
+# ============================================================
+DATA_FOLDER   = "/Users/qianyulu/Desktop/IDXexchange"
+OUTPUT_FOLDER = "/Users/qianyulu/Desktop/IDXexchange"
+
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# Fields to apply IQR outlier detection (per Handbook)
+IQR_FIELDS = ["ClosePrice", "LivingArea", "DaysOnMarket"]
+
+# ============================================================
+# STEP 1: Load dataset from Week 6
+# ============================================================
+print("=" * 55)
+print("STEP 1: LOADING DATASET")
+print("=" * 55)
+
+sold = pd.read_csv(
+    os.path.join(DATA_FOLDER, "sold_featured.csv"),
+    low_memory=False
+)
+
+print(f"sold_featured.csv loaded: {len(sold):>7,} rows  x  {sold.shape[1]} columns")
+print()
+
+# Ensure numeric types
+for col in IQR_FIELDS:
+    if col in sold.columns:
+        sold[col] = pd.to_numeric(sold[col], errors="coerce")
+
+# ============================================================
+# STEP 2: Business rules — always-invalid values
+# ============================================================
+print("=" * 55)
+print("STEP 2: BUSINESS RULE FLAGS")
+print("=" * 55)
+
+# Why: these values are logically impossible regardless of
+# statistical distribution — no IQR calculation needed
+
+sold["flag_business_rule_invalid"] = (
+    (sold["ClosePrice"]  <= 0) |
+    (sold["LivingArea"]  <= 0) |
+    (sold["DaysOnMarket"] < 0) |
+    (sold["price_ratio"] <= 0) |
+    (sold["price_ratio"].isin([np.inf, -np.inf]))
+)
+
+br_count = sold["flag_business_rule_invalid"].sum()
+print(f"Records flagged by business rules: {br_count:,}  "
+      f"({br_count / len(sold) * 100:.2f}%)")
+print()
+
+# ============================================================
+# STEP 3: IQR outlier detection
+# ============================================================
+print("=" * 55)
+print("STEP 3: IQR OUTLIER DETECTION")
+print("=" * 55)
+
+def apply_iqr_flag(df, field):
+    """
+    Calculate IQR bounds for a field and add a flag column.
+    Records outside [Q1 - 1.5*IQR, Q3 + 1.5*IQR] are flagged.
+    Uses percentiles alongside IQR to guide decisions.
+    """
+    if field not in df.columns:
+        print(f"  [{field}] NOT FOUND — skipping.")
+        return df
+
+    series = df[field].dropna()
+
+    Q1    = series.quantile(0.25)
+    Q3    = series.quantile(0.75)
+    IQR   = Q3 - Q1
+    lower = Q1 - 1.5 * IQR
+    upper = Q3 + 1.5 * IQR
+
+    flag_col = f"flag_outlier_{field.lower()}"
+    df[flag_col] = (df[field] < lower) | (df[field] > upper)
+
+    outlier_count = df[flag_col].sum()
+    pct           = outlier_count / len(df) * 100
+
+    print(f"\n  [{field}]")
+    print(f"    Q1           : {Q1:>15,.2f}")
+    print(f"    Q3           : {Q3:>15,.2f}")
+    print(f"    IQR          : {IQR:>15,.2f}")
+    print(f"    Lower bound  : {lower:>15,.2f}")
+    print(f"    Upper bound  : {upper:>15,.2f}")
+    print(f"    Outliers     : {outlier_count:>7,}  ({pct:.2f}%)")
+    print(f"    5th  pctile  : {series.quantile(0.05):>15,.2f}")
+    print(f"    95th pctile  : {series.quantile(0.95):>15,.2f}")
+
+    return df
+
+for field in IQR_FIELDS:
+    sold = apply_iqr_flag(sold, field)
+
+print()
+
+# Combined outlier flag — any of the three fields is an outlier
+sold["flag_any_outlier"] = (
+    sold["flag_outlier_closeprice"]  |
+    sold["flag_outlier_livingarea"]  |
+    sold["flag_outlier_daysonmarket"]
+)
+
+any_outlier_count = sold["flag_any_outlier"].sum()
+print(f"Records flagged as outlier in ANY field: "
+      f"{any_outlier_count:,}  ({any_outlier_count / len(sold) * 100:.2f}%)")
+print()
+
+# ============================================================
+# STEP 4: Before / After comparison
+# ============================================================
+print("=" * 55)
+print("STEP 4: BEFORE / AFTER COMPARISON")
+print("=" * 55)
+
+# Define clean mask: exclude business rule invalids AND IQR outliers
+clean_mask = (
+    ~sold["flag_business_rule_invalid"] &
+    ~sold["flag_any_outlier"]
+)
+
+sold_clean = sold[clean_mask].copy()
+
+comparison_fields = IQR_FIELDS + ["price_per_sqft", "price_ratio"]
+
+print(f"\n{'Field':<25}  {'Before (median)':>18}  "
+      f"{'After (median)':>18}  {'Change':>10}")
+print("-" * 75)
+
+for field in comparison_fields:
+    if field not in sold.columns:
+        continue
+    before_median = sold[field].median()
+    after_median  = sold_clean[field].median()
+    change        = after_median - before_median
+    print(f"  {field:<23}  {before_median:>18,.2f}  "
+          f"{after_median:>18,.2f}  {change:>+10,.2f}")
+
+print()
+print(f"Dataset size BEFORE filtering : {len(sold):>7,} rows")
+print(f"Dataset size AFTER  filtering : {len(sold_clean):>7,} rows")
+print(f"Rows removed                  : {len(sold) - len(sold_clean):>7,} "
+      f"({(len(sold) - len(sold_clean)) / len(sold) * 100:.2f}%)")
+print()
+
+# ============================================================
+# STEP 5: Save outputs
+# ============================================================
+print("=" * 55)
+print("STEP 5: SAVING OUTPUT FILES")
+print("=" * 55)
+
+# File 1: Full flagged dataset (all records + all flag columns)
+# Use this to review outlier decisions without losing raw data
+flagged_path = os.path.join(OUTPUT_FOLDER, "sold_flagged_outliers.csv")
+sold.to_csv(flagged_path, index=False)
+print(f"sold_flagged_outliers.csv saved -> {flagged_path}")
+print(f"  Rows    : {len(sold):,}")
+print(f"  Columns : {sold.shape[1]}")
+print()
+
+# File 2: Clean filtered dataset (outliers and invalids removed)
+# This is the final analysis-ready dataset for Tableau (Weeks 8-10)
+clean_path = os.path.join(OUTPUT_FOLDER, "sold_final.csv")
+sold_clean.to_csv(clean_path, index=False)
+print(f"sold_final.csv saved -> {clean_path}")
+print(f"  Rows    : {len(sold_clean):,}")
+print(f"  Columns : {sold_clean.shape[1]}")
+print()
+
+print("=" * 55)
+print("WEEK 7 COMPLETE")
+print("=" * 55)
+print()
+print("Summary of flag columns added:")
+flag_cols = [c for c in sold.columns if c.startswith("flag_")]
+for f in flag_cols:
+    count = sold[f].sum()
+    print(f"  {f:<40s}  {count:>7,}")
+print()
+print("sold_final.csv is ready for Tableau (Weeks 8-10).")
