@@ -356,7 +356,8 @@ flag_cols_to_exclude = [
     "flag_invalid_close_price",
     "flag_invalid_living_area",
     "flag_negative_dom",
-    "flag_any_geo_issue",
+    # flag_any_geo_issue is NOT excluded here
+    # geographic issues are flagged for auditing only, not deleted
 ]
 
 def build_clean_dataset(df, label):
