@@ -156,28 +156,38 @@ try:
         district_name_col = districts.columns[1]
         print(f"Using column '{district_name_col}' as district name.")
 
-    # Keep only Unified districts to avoid duplicates
-    # (elementary + high school districts overlap the same area)
-    if "DistrictType" in districts.columns:
-        unified = districts[districts["DistrictType"] == "Unified"].copy()
-        print(f"Filtered to Unified districts: {len(unified):,}")
-    else:
-        unified = districts.copy()
-        print("DistrictType column not found, using all districts.")
+    # Use ALL districts (not just Unified) to maximize match rate
+    # When a property falls in overlapping districts (elementary + high),
+    # we prioritize Unified type; otherwise keep the first match
+    print(f"Total districts loaded: {len(districts):,}")
+    print()
 
-    # Spatial join
-    print("Running spatial join...")
+    # Spatial join against all districts
+    print("Running spatial join (all district types)...")
     joined = gpd.sjoin(
         sold_gdf,
-        unified[[district_name_col, "geometry"]],
+        districts[[district_name_col, "DistrictType", "geometry"]]
+        if "DistrictType" in districts.columns
+        else districts[[district_name_col, "geometry"]],
         how="left",
         predicate="within"
     )
 
-    # Map results back to sold
+    # Fix: deduplicate — for properties matching multiple districts,
+    # keep Unified first, then fall back to first match
+    if "DistrictType" in joined.columns:
+        # Sort so Unified rows come first, then deduplicate on index
+        joined = joined.sort_values(
+            "DistrictType",
+            key=lambda x: x.map(lambda v: 0 if v == "Unified" else 1)
+        )
+
+    joined_deduped = joined[~joined.index.duplicated(keep="first")]
+
+    # Map results back to sold using index alignment
     sold["school_district"] = None
-    sold.loc[sold_valid_geo.index, "school_district"] = (
-        joined[district_name_col].values
+    sold.loc[joined_deduped.index, "school_district"] = (
+        joined_deduped[district_name_col]
     )
 
     matched     = sold["school_district"].notna().sum()
@@ -233,7 +243,7 @@ def segment_summary(df, group_col, label):
     print()
     return summary
 
-# Segment 1: PropertyType and PropertySubType
+# Segment 1: PropertySubType
 seg_subtype  = segment_summary(sold, "PropertySubType",  "PropertySubType")
 
 # Segment 2: CountyOrParish
@@ -242,14 +252,34 @@ seg_county   = segment_summary(sold, "CountyOrParish",   "CountyOrParish")
 # Segment 3: MLSAreaMajor
 seg_mls_area = segment_summary(sold, "MLSAreaMajor",     "MLSAreaMajor")
 
-# Segment 4: ListOfficeName (competitive intelligence)
+# Segment 4: ListOfficeName individual
 seg_list_off = segment_summary(sold, "ListOfficeName",   "ListOfficeName")
 
-# Segment 5: BuyerOfficeName (competitive intelligence)
+# Segment 5: BuyerOfficeName individual
 seg_buy_off  = segment_summary(sold, "BuyerOfficeName",  "BuyerOfficeName")
 
-# Segment 6: YrMo time series
-seg_yrmo     = segment_summary(sold, "close_yrmo",       "YrMo (monthly trend)")
+# Segment 6: ListOfficeName + BuyerOfficeName combined
+# (required for competitive intelligence analysis per mentor's feedback)
+print("\n--- ListOfficeName + BuyerOfficeName: Combined Segment Summary (top 10) ---")
+if "ListOfficeName" in sold.columns and "BuyerOfficeName" in sold.columns:
+    seg_combined_offices = (
+        sold.groupby(["ListOfficeName", "BuyerOfficeName"])
+        .agg(
+            transaction_count  = ("ClosePrice", "count"),
+            median_close_price = ("ClosePrice", "median"),
+            avg_close_price    = ("ClosePrice", "mean"),
+            median_ppsf        = ("price_per_sqft", "median"),
+            median_dom         = ("DaysOnMarket", "median"),
+            avg_price_ratio    = ("price_ratio", "mean"),
+        )
+        .sort_values("transaction_count", ascending=False)
+        .round(2)
+    )
+    print(seg_combined_offices.head(10).to_string())
+    print()
+
+# Segment 7: YrMo time series
+seg_yrmo = segment_summary(sold, "close_yrmo", "YrMo (monthly trend)")
 
 # ============================================================
 # STEP 5: Save output
